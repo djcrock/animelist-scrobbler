@@ -47,9 +47,13 @@ func main() {
 	log.Print("Connecting to Plex server...")
 	pc, err := plex.New(plexURL, plexToken)
 	if err != nil {
-		log.Fatalf("Could not connect to Plex server: %v", err)
+		log.Fatalf("Could not initialize Plex API: %v", err)
 	}
 	plexClient = pc
+	_, err = plexClient.Test()
+	if err != nil {
+		log.Fatalf("Could not connect to Plex server: %v", err)
+	}
 	log.Print("Connected to Plex server")
 
 	log.Print("Verifying MyAnimeList account...")
