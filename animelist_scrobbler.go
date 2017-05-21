@@ -20,11 +20,11 @@ type CustomPlexMetadata struct {
 }
 
 var (
-	malClient      *mal.Client
-	plexClient     *plex.Plex
-	plexUser       string
-	malUser        string
-	animeSectionID int
+	malClient  *mal.Client
+	plexClient *plex.Plex
+	plexUser   string
+	malUser    string
+	testMode   bool
 )
 
 func main() {
@@ -34,6 +34,7 @@ func main() {
 	flag.StringVar(&plexURL, "plexurl", "", "URL of the Plex server")
 	flag.StringVar(&plexToken, "plextoken", "", "Plex authentication token")
 	flag.StringVar(&plexUser, "plexuser", "", "Username of the Plex user for whom to scrobble. Will scrobble activity of all users if omitted.")
+	flag.BoolVar(&testMode, "test", false, "Trigger scrobbling on pause as well, but do not update MyAnimeList")
 	flag.Parse()
 
 	if plexURL == "" || plexToken == "" {
@@ -68,48 +69,29 @@ func main() {
 
 	mux := http.NewServeMux()
 	wh := plex.NewWebhook()
-	wh.OnScrobble(handleWebhook)
+	wh.OnScrobble(handleScrobbleWebhook)
+	if testMode {
+		wh.OnPause(handleScrobbleWebhook)
+	}
 	mux.HandleFunc("/plex", wh.Handler)
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
 
-func handleWebhook(w plex.Webhook) {
+func handleScrobbleWebhook(w plex.Webhook) {
 	if plexUser != "" && w.Account.Title != plexUser {
 		log.Printf("Hook received for a user other than %s. Ignoring.", plexUser)
 		return
 	}
-	var action string
-	switch w.Event {
-	case "media.play":
-		action = "started watching"
-	case "media.pause":
-		action = "paused"
-	case "media.resume":
-		action = "resumed"
-	case "media.stop":
-		action = "stopped watching"
-	case "media.scrobble":
-		action = "finished watching"
-	case "media.rate":
-		action = "rated"
-	default:
-		action = "did something with"
-	}
 
 	log.Printf(
-		"User %s on %s %s %s - %s - %s",
+		"User %s on %s finished watching %s - %s - %s. Scrobbling!",
 		w.Account.Title,
 		w.Server.Title,
-		action,
 		w.Metadata.GrandparentTitle,
 		w.Metadata.ParentTitle,
 		w.Metadata.Title,
 	)
-
-	if w.Event == "media.scrobble" {
-		log.Print("Scrobbling!")
-		scrobble(w)
-	}
+	scrobble(w)
 }
 
 func scrobble(w plex.Webhook) {
@@ -118,6 +100,7 @@ func scrobble(w plex.Webhook) {
 		log.Printf("Failed to retrieve custom Plex metadata: %v", err)
 		return
 	}
+	episode := w.Metadata.Index + (customMetadata.FirstEpisode - 1)
 
 	list, _, err := malClient.Anime.List(malUser)
 	if err != nil {
@@ -135,15 +118,13 @@ func scrobble(w plex.Webhook) {
 		log.Printf("No anime found for ID %d", customMetadata.MyAnimeListID)
 		return
 	}
-	log.Printf("Found anime: %s (%d)", anime.SeriesTitle, customMetadata.MyAnimeListID)
+	log.Printf("Found anime: %s (%d) episode %d", anime.SeriesTitle, customMetadata.MyAnimeListID, episode)
 
 	rewatching, err := strconv.Atoi(anime.MyRewatching)
 	if err != nil {
 		log.Printf("Could not parse 'rewatching' status: %v", err)
 		return
 	}
-
-	episode := w.Metadata.Index + (customMetadata.FirstEpisode - 1)
 
 	if anime.MyStatus == mal.StatusCompleted && rewatching == 0 {
 		log.Printf("Starting re-watch")
@@ -175,6 +156,10 @@ func scrobble(w plex.Webhook) {
 		ae.DateFinish = time.Now().Format("01022006")
 	}
 
+	if testMode {
+		log.Print("Test mode enabled, not updating MyAnimeList")
+		return
+	}
 	_, err = malClient.Anime.Update(customMetadata.MyAnimeListID, ae)
 	if err != nil {
 		log.Printf("Failed to update MyAnimeList entry: %v", err)
@@ -182,6 +167,7 @@ func scrobble(w plex.Webhook) {
 	log.Printf("Updated MyAnimeList entry: %s episode %d watched", anime.SeriesTitle, episode)
 }
 
+// getCustomPlexMetadata retrieves metadata stored as JSON in the "Summary" field for the season
 func getCustomPlexMetadata(key string) (*CustomPlexMetadata, error) {
 	m, err := plexClient.GetMetadata(key)
 	if err != nil {
