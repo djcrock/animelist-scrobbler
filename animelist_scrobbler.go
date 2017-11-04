@@ -24,6 +24,7 @@ var (
 	plexClient *plex.Plex
 	plexUser   string
 	malUser    string
+	port       int
 	testMode   bool
 )
 
@@ -34,6 +35,7 @@ func main() {
 	flag.StringVar(&plexURL, "plexurl", "", "URL of the Plex server")
 	flag.StringVar(&plexToken, "plextoken", "", "Plex authentication token")
 	flag.StringVar(&plexUser, "plexuser", "", "Username of the Plex user for whom to scrobble. Will scrobble activity of all users if omitted.")
+	flag.IntVar(&port, "port", 8080, "Port on which to run the service. Defaults to 8080.")
 	flag.BoolVar(&testMode, "test", false, "Trigger scrobbling on pause as well, but do not update MyAnimeList")
 	flag.Parse()
 
@@ -74,7 +76,7 @@ func main() {
 		wh.OnPause(handleScrobbleWebhook)
 	}
 	mux.HandleFunc("/plex", wh.Handler)
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(port), mux))
 }
 
 func handleScrobbleWebhook(w plex.Webhook) {
